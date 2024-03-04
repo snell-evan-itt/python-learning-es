@@ -1,6 +1,18 @@
 import csv
 import requests
 import xml.etree.ElementTree as ET
+import getpass
+
+def generate_api_key(firewall_ip, username, password):
+    url = f"https://{firewall_ip}/api/?type=keygen&user={username}&password={password}"
+    response = requests.get(url, verify=False)
+    if response.status_code == 200:
+        root = ET.fromstring(response.content)
+        api_key = root.find('.//key').text
+        return api_key
+    else:
+        print(f"Failed to generate API key from {firewall_ip}. Status code: {response.status_code}")
+        return None
 
 def get_users_and_roles(firewall_ip, api_key):
     url = f"https://{firewall_ip}/api/?type=config&action=get&xpath=/config/mgt-config/users"
@@ -25,24 +37,29 @@ def main():
     with open('firewalls.txt', 'r') as file:
         firewalls = file.read().splitlines()
 
-    api_key = 'LUFRPT1SblppdmMraWNjZzhLUDJsM0tBK1ZHZk83eGc9UlkvSDBiUVI1SmhGNG14YktVZHNSZjRCdHBweURxanZnUUthb2xVM0ZqUCtYYXJIM01Ca2V1NUJLb1A5Q0RiNQ=='
+    username = input("Enter your firewall username: ")
+    password = getpass.getpass("Enter your firewall password: ")
 
     for firewall_ip in firewalls:
-        users_and_roles = get_users_and_roles(firewall_ip, api_key)
-        if users_and_roles:
-            filename = f"{firewall_ip}_users_and_roles.csv"
-            with open(filename, 'w', newline='') as csvfile:
-                fieldnames = ['Username', 'Role']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                for user, roles in users_and_roles.items():
-                    if roles:
-                        writer.writerow({'Username': user, 'Role': ', '.join(roles)})
-                    else:
-                        writer.writerow({'Username': user, 'Role': 'None'})
-            print(f"User and role information for {firewall_ip} written to {filename}")
+        api_key = generate_api_key(firewall_ip, username, password)
+        if api_key:
+            users_and_roles = get_users_and_roles(firewall_ip, api_key)
+            if users_and_roles:
+                filename = f"{firewall_ip}_users_and_roles.csv"
+                with open(filename, 'w', newline='') as csvfile:
+                    fieldnames = ['Username', 'Role']
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                    writer.writeheader()
+                    for user, roles in users_and_roles.items():
+                        if roles:
+                            writer.writerow({'Username': user, 'Role': ', '.join(roles)})
+                        else:
+                            writer.writerow({'Username': user, 'Role': 'None'})
+                print(f"User and role information for {firewall_ip} written to {filename}")
+            else:
+                print(f"No users found on {firewall_ip}.")
         else:
-            print(f"No users found on {firewall_ip}.")
+            print(f"Failed to generate API key for {firewall_ip}.")
 
 if __name__ == "__main__":
     main()
