@@ -1,4 +1,3 @@
-import getpass
 import requests
 import xml.etree.ElementTree as ET
 import pandas as pd
@@ -20,7 +19,7 @@ def generate_api_key(firewall_ip, username, password):
         print(f"Failed to generate API key from {firewall_ip}. Status code: {response.status_code}")
         return None
 
-def send_email(sender_email, receiver_email, smtp_server, smtp_port, password):
+def send_email(sender_email, receiver_email, smtp_server, smtp_port):
     subject = "Firewall Baseline CSV"
     body = "Please find the attached firewall baseline CSV file."
 
@@ -41,8 +40,7 @@ def send_email(sender_email, receiver_email, smtp_server, smtp_port, password):
     msg.attach(part)
     text = msg.as_string()
 
-    server = smtplib.SMTP_SSL(smtp_server, smtp_port)
-    server.login(sender_email, password)
+    server = smtplib.SMTP(smtp_server, smtp_port)
     server.sendmail(sender_email, receiver_email, text)
     server.quit()
 
@@ -52,8 +50,7 @@ def get_con_devices():
     sender_email = "your_email@example.com"  # Sender's email address
     receiver_email = "recipient@example.com"  # Receiver's email address
     smtp_server = "smtp.example.com"  # SMTP server address
-    smtp_port = 465  # SMTP port number
-    smtp_password = getpass.getpass("Enter your email password: ")
+    smtp_port = 25  # SMTP port number
 
     with open('panoramas.txt', 'r', encoding="utf-8") as file:
         panoramas = file.read().splitlines()
@@ -98,6 +95,6 @@ def get_con_devices():
     clean_df = df.dropna()
     clean_df.to_csv('firewall_baseline.csv', index=False)
 
-    send_email(sender_email, receiver_email, smtp_server, smtp_port, smtp_password)
+    send_email(sender_email, receiver_email, smtp_server, smtp_port)
 
 get_con_devices()
