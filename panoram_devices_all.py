@@ -25,7 +25,7 @@ def get_con_devices():
    
     rest_url = "/api/?type=op&cmd=<show><devices><connected></connected></devices></show>"
     
-    all_data = []  # List to accumulate data from all panoramas
+    all_devices = []  # List to accumulate data from all panoramas
     
     for pan in panoramas:
         api_key = generate_api_key(pan, username, password)
@@ -54,10 +54,13 @@ def get_con_devices():
                          "AV Version" : avversion,
                          "WildFire Version" : wildfireversion})
  
-        all_data.extend(rows)
+        all_devices.extend(rows)
  
     cols = ["Hostname", "Serial Number", "Model", "Software Version", "App Version", "AV Version", "WildFire Version"]
-    df = pd.DataFrame(all_data, columns=cols)
-    df.to_csv('all_devices_output.csv', index=False)
+    df = pd.DataFrame(all_devices, columns=cols)
+    df.to_csv('firewall_dirty.csv', index=False)
+    df = pd.read_csv('firewall_dirty.csv')
+    clean_df = df.dropna()
+    clean_df.to_csv('firewall_baseline.csv', index=False)
 
 get_con_devices()
