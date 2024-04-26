@@ -1,7 +1,14 @@
-import threading
+import os
 import requests
 import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor
+import pandas as pd
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+
+requests.packages.urllib3.disable_warnings()
 
 def generate_api_key(firewall_ip, username, password):
     url = f"https://{firewall_ip}/api/?type=keygen&user={username}&password={password}"
@@ -14,12 +21,50 @@ def generate_api_key(firewall_ip, username, password):
         print(f"Failed to generate API key from {firewall_ip}. Status code: {response.status_code}")
         return None
 
-def fetch_firewall_data(panorama, username, password, all_devices, lock):
-    api_key = generate_api_key(panorama, username, password)
-    if api_key:
-        rest_url = f"/api/?type=op&cmd=<show><devices><connected></connected></devices></show>&key={api_key}"
-        url = f"https://{panorama}{rest_url}"
-        print(f"Fetching data from: {panorama}")
+def send_email(sender_email, receiver_email, smtp_server, smtp_port):
+    subject = "Firewall Baseline Report"
+    body = "Please find the attached firewall baseline xlsx file. Showing the firewalls and their software versions."
+
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = ", ".join(receiver_email)
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+
+    filename = "firewall_baseline.xlsx"
+    attachment = open(filename, "rb")
+
+    part = MIMEBase("application", "octet-stream")
+    part.set_payload((attachment).read())
+    encoders.encode_base64(part)
+    part.add_header("Content-Disposition", f"attachment; filename= {filename}")
+
+    msg.attach(part)
+    text = msg.as_string()
+
+    server = smtplib.SMTP(smtp_server, smtp_port)
+    server.sendmail(sender_email, receiver_email, text)
+    server.quit()
+
+def get_con_devices():
+    username = ""
+    password = ""
+    sender_email = "Perimeter_Firewall_Engineering@optum.com"  # Sender's email address
+    receiver_email = ["evan_snell@optum.com", "taylor_kerber@optum.com", "phil@optum.com"]  # Receiver emails
+    smtp_server = "mailo2.uhc.com"  # SMTP server address
+    smtp_port = 25  # SMTP port number
+
+    with open('panoramas.txt', 'r', encoding="utf-8") as file:
+        panoramas = file.read().splitlines()
+
+    rest_url = "/api/?type=op&cmd=<show><devices><connected></connected></devices></show>"
+
+    all_devices = []  # List to accumulate data from all panoramas
+
+    for pan in panoramas:
+        api_key = generate_api_key(pan, username, password)
+        url = "https://" + pan + rest_url + "&key=" + api_key
+        print(pan)
 
         resp = requests.get(url, verify=False)
         xmldata = ET.fromstring(resp.content)
@@ -43,25 +88,17 @@ def fetch_firewall_data(panorama, username, password, all_devices, lock):
                          "AV Version": avversion,
                          "WildFire Version": wildfireversion})
 
-        with lock:
-            all_devices.extend(rows)
+        all_devices.extend(rows)
 
-def get_con_devices_threaded():
-    username = ""
-    password = ""
-    all_devices = []  # List to accumulate data from all panoramas
-    lock = threading.Lock()
+    cols = ["Hostname", "Serial Number", "Model", "Software Version", "App Version", "AV Version", "WildFire Version"]
+    df = pd.DataFrame(all_devices, columns=cols)
+    df.to_excel('firewall_dirty.xlsx', index=False)
+    df = pd.read_excel('firewall_dirty.xlsx')
+    clean_df = df.dropna()
+    clean_df.to_excel('firewall_baseline.xlsx', index=False)
 
-    with open('panoramas.txt', 'r', encoding="utf-8") as file:
-        panoramas = file.read().splitlines()
+    send_email(sender_email, receiver_email, smtp_server, smtp_port)
+    
+    os.remove('firewall_dirty.xlsx')
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(fetch_firewall_data, pan, username, password, all_devices, lock) for pan in panoramas]
-        # Wait for all threads to complete
-        for future in futures:
-            future.result()
-
-    # Further processing, saving to Excel, sending emails, etc., would follow here
-
-# Example call (commented out for now)
-# get_con_devices_threaded()
+get_con_devices()
