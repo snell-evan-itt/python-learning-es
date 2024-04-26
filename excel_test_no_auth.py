@@ -1,12 +1,15 @@
-import getpass
+import os
 import requests
 import xml.etree.ElementTree as ET
 import pandas as pd
-import os
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 
-#from requests.packages.urllib3.exceptions import InsecureRequestWarning
-requests.packages.urllib3.disable_warnings()\
-    
+requests.packages.urllib3.disable_warnings()
+
 def generate_api_key(firewall_ip, username, password):
     url = f"https://{firewall_ip}/api/?type=keygen&user={username}&password={password}"
     response = requests.get(url, verify=False)
@@ -17,35 +20,57 @@ def generate_api_key(firewall_ip, username, password):
     else:
         print(f"Failed to generate API key from {firewall_ip}. Status code: {response.status_code}")
         return None
-   
+
+def send_email(sender_email, receiver_email, smtp_server, smtp_port):
+    subject = "Firewall Baseline Report"
+    body = "Please find the attached firewall baseline xlsx file. Showing the firewalls and their software versions."
+
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = ", ".join(receiver_email)
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+
+    filename = "firewall_baseline.xlsx"
+    attachment = open(filename, "rb")
+
+    part = MIMEBase("application", "octet-stream")
+    part.set_payload((attachment).read())
+    encoders.encode_base64(part)
+    part.add_header("Content-Disposition", f"attachment; filename= {filename}")
+
+    msg.attach(part)
+    text = msg.as_string()
+
+    server = smtplib.SMTP(smtp_server, smtp_port)
+    server.sendmail(sender_email, receiver_email, text)
+    server.quit()
+
 def get_con_devices():
- 
- 
-    #username = input("Please enter the username: ")
-    #password = getpass.getpass(prompt="Please enter the password: ")
     username = ""
     password = ""
-   
-   
-    with open('panoramas.txt','r', encoding="utf-8") as file:
+    sender_email = "Perimeter_Firewall_Engineering@optum.com"  # Sender's email address
+    receiver_email = ["evan_snell@optum.com", "taylor_kerber@optum.com", "phil@optum.com"]  # Receiver emails
+    smtp_server = "mailo2.uhc.com"  # SMTP server address
+    smtp_port = 25  # SMTP port number
+
+    with open('panoramas.txt', 'r', encoding="utf-8") as file:
         panoramas = file.read().splitlines()
-   
+
     rest_url = "/api/?type=op&cmd=<show><devices><connected></connected></devices></show>"
- 
-   
+
+    all_devices = []  # List to accumulate data from all panoramas
+
     for pan in panoramas:
         api_key = generate_api_key(pan, username, password)
         url = "https://" + pan + rest_url + "&key=" + api_key
         print(pan)
-       
- 
+
         resp = requests.get(url, verify=False)
         xmldata = ET.fromstring(resp.content)
-           
-        # Settings columns and rows
-        cols = ["Hostname", "Serial Number", "Model", "Software Version", "App Version", "AV Version", "WildFire Version"]
+
         rows = []
- 
+
         for el in xmldata.iter('entry'):
             hostname = el.findtext("hostname")
             serial = el.findtext("serial")
@@ -54,28 +79,26 @@ def get_con_devices():
             appversion = el.findtext("app-version")
             avversion = el.findtext("av-version")
             wildfireversion = el.findtext("wildfire-version")
-               
-               
-                               
+
             rows.append({"Hostname": hostname,
-                "Serial Number" : serial,
-                "Model" : model,
-                "Software Version" : swversion,
-                "App Version" : appversion,
-                "AV Version" : avversion,
-                "WildFire Version" : wildfireversion})
- 
-                   
-                               
-               
-        df = pd.DataFrame(rows, columns=cols)
-        df = df.reset_index(drop=True)
-        df.to_csv(pan + '-output.csv', index=False)
-        df = pd.read_csv(pan + '-output.csv')
-        clean_df = df.dropna()
-        clean_df.to_csv(pan + '-output-clean.csv', index=False)
+                         "Serial Number": serial,
+                         "Model": model,
+                         "Software Version": swversion,
+                         "App Version": appversion,
+                         "AV Version": avversion,
+                         "WildFire Version": wildfireversion})
 
-               
+        all_devices.extend(rows)
+
+    cols = ["Hostname", "Serial Number", "Model", "Software Version", "App Version", "AV Version", "WildFire Version"]
+    df = pd.DataFrame(all_devices, columns=cols)
+    df.to_excel('firewall_dirty.xlsx', index=False)
+    df = pd.read_excel('firewall_dirty.xlsx')
+    clean_df = df.dropna()
+    clean_df.to_excel('firewall_baseline.xlsx', index=False)
+
+    send_email(sender_email, receiver_email, smtp_server, smtp_port)
+    
+    os.remove('firewall_dirty.xlsx')
+
 get_con_devices()
-
-
