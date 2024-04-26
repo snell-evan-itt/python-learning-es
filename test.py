@@ -7,6 +7,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
+from concurrent.futures import ThreadPoolExecutor
 
 requests.packages.urllib3.disable_warnings()
 
@@ -21,74 +22,46 @@ def generate_api_key(firewall_ip, username, password):
         print(f"Failed to generate API key from {firewall_ip}. Status code: {response.status_code}")
         return None
 
-def send_email(sender_email, receiver_email, smtp_server, smtp_port):
-    subject = "Firewall Baseline Report"
-    body = "Please find the attached firewall baseline xlsx file. Showing the firewalls and their software versions."
-
-    msg = MIMEMultipart()
-    msg['From'] = sender_email
-    msg['To'] = ", ".join(receiver_email)
-    msg['Subject'] = subject
-    msg.attach(MIMEText(body, 'plain'))
-
-    filename = "firewall_baseline.xlsx"
-    attachment = open(filename, "rb")
-
-    part = MIMEBase("application", "octet-stream")
-    part.set_payload((attachment).read())
-    encoders.encode_base64(part)
-    part.add_header("Content-Disposition", f"attachment; filename= {filename}")
-
-    msg.attach(part)
-    text = msg.as_string()
-
-    server = smtplib.SMTP(smtp_server, smtp_port)
-    server.sendmail(sender_email, receiver_email, text)
-    server.quit()
-
-def get_con_devices():
-    username = ""
-    password = ""
-    sender_email = "Perimeter_Firewall_Engineering@optum.com"  # Sender's email address
-    receiver_email = ["evan_snell@optum.com", "taylor_kerber@optum.com", "phil@optum.com"]  # Receiver emails
-    smtp_server = "mailo2.uhc.com"  # SMTP server address
-    smtp_port = 25  # SMTP port number
-
-    with open('panoramas.txt', 'r', encoding="utf-8") as file:
-        panoramas = file.read().splitlines()
-
+def fetch_firewall_data(pan, username, password):
     rest_url = "/api/?type=op&cmd=<show><devices><connected></connected></devices></show>"
-
-    all_devices = []  # List to accumulate data from all panoramas
-
-    for pan in panoramas:
-        api_key = generate_api_key(pan, username, password)
+    api_key = generate_api_key(pan, username, password)
+    if api_key:
         url = "https://" + pan + rest_url + "&key=" + api_key
-        print(pan)
-
         resp = requests.get(url, verify=False)
         xmldata = ET.fromstring(resp.content)
 
         rows = []
-
         for el in xmldata.iter('entry'):
-            hostname = el.findtext("hostname")
-            serial = el.findtext("serial")
-            model = el.findtext("model")
-            swversion = el.findtext("sw-version")
-            appversion = el.findtext("app-version")
-            avversion = el.findtext("av-version")
-            wildfireversion = el.findtext("wildfire-version")
+            rows.append({
+                "Hostname": el.findtext("hostname"),
+                "Serial Number": el.findtext("serial"),
+                "Model": el.findtext("model"),
+                "Software Version": el.findtext("sw-version"),
+                "App Version": el.findtext("app-version"),
+                "AV Version": el.findtext("av-version"),
+                "WildFire Version": el.findtext("wildfire-version")
+            })
+        return rows
+    else:
+        return []
 
-            rows.append({"Hostname": hostname,
-                         "Serial Number": serial,
-                         "Model": model,
-                         "Software Version": swversion,
-                         "App Version": appversion,
-                         "AV Version": avversion,
-                         "WildFire Version": wildfireversion})
+def get_con_devices():
+    username = ""
+    password = ""
+    sender_email = "Perimeter_Firewall_Engineering@optum.com"
+    receiver_email = ["evan_snell@optum.com", "taylor_kerber@optum.com", "phil@optum.com"]
+    smtp_server = "mailo2.uhc.com"
+    smtp_port = 25
 
-        all_devices.extend(rows)
+    with open('panoramas.txt', 'r', encoding="utf-8") as file:
+        panoramas = file.read().splitlines()
+
+    all_devices = []
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        results = executor.map(lambda pan: fetch_firewall_data(pan, username, password), panoramas)
+
+    for result in results:
+        all_devices.extend(result)
 
     cols = ["Hostname", "Serial Number", "Model", "Software Version", "App Version", "AV Version", "WildFire Version"]
     df = pd.DataFrame(all_devices, columns=cols)
